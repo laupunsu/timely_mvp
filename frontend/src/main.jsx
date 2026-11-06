@@ -3,7 +3,11 @@ import {createRoot} from 'react-dom/client';
 import {Check, ChevronRight, Clock3, MapPin, Plus, Sparkles, ArrowLeft, ArrowRight, Navigation, CalendarDays, CircleCheck, ListTodo, Route, Users, RefreshCw, Trash2, Lock, Star, ExternalLink} from 'lucide-react';
 import './style.css';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE_URL || (
+  import.meta.env.DEV
+    ? 'http://localhost:8000'
+    : 'https://timelymvp-production.up.railway.app'
+);
 const DEMO = [
  {id:9,name:'Gardens By The Bay flower dome',area:'Marina Bay',lat:1.284,lng:103.8648},
  {id:10,name:'Serangoon Library',area:'Serangoon',lat:1.3506,lng:103.8721},
