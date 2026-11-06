@@ -35,11 +35,11 @@ app.add_middleware(CORSMiddleware, allow_origins=[x.strip() for x in origins], a
 def db():
     try:
         return mysql.connector.connect(
-            host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-            port=int(os.getenv("MYSQL_PORT", "3306")),
-            user=os.getenv("MYSQL_USER", "root"),
-            password=os.getenv("MYSQL_PASSWORD", ""),
-            database=os.getenv("MYSQL_DATABASE", "occupancy_list"),
+            host=os.getenv("MYSQL_HOST") or os.getenv("MYSQLHOST") or "127.0.0.1",
+            port=int(os.getenv("MYSQL_PORT") or os.getenv("MYSQLPORT") or "3306"),
+            user=os.getenv("MYSQL_USER") or os.getenv("MYSQLUSER") or "root",
+            password=os.getenv("MYSQL_PASSWORD") or os.getenv("MYSQLPASSWORD") or "",
+            database=os.getenv("MYSQL_DATABASE") or os.getenv("MYSQLDATABASE") or "occupancy_list",
             connection_timeout=4,
         )
     except Error as e:
