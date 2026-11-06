@@ -1,26 +1,35 @@
 import os, math
+import json
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta, time
 from typing import Optional
 import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from occupancy_generator import generate_occupancy
 
 load_dotenv()
+class RegisterVenueIn(BaseModel):
+    place_id: str
+    category: str
+    capacity: int = Field(gt=0, le=1000000)
+
 app = FastAPI(title="Timely API", version="0.1.0")
 origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 app.add_middleware(CORSMiddleware, allow_origins=[x.strip() for x in origins], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # Coordinates are approximate display/routing anchors for the four locations in the supplied SQL dump.
-VENUE_META = {
-    "Gardens By The Bay flower dome": {"lat": 1.2840, "lng": 103.8648, "area": "Marina Bay"},
-    "Serangoon Library": {"lat": 1.3506, "lng": 103.8721, "area": "Serangoon"},
-    "Sentosa, Universal Studios": {"lat": 1.2540, "lng": 103.8238, "area": "Sentosa"},
-    "Lolas Cafe": {"lat": 1.3120, "lng": 103.9000, "area": "Singapore"},
-}
-DEMO_VENUES = [{"id": i+1, "name": n, **m} for i,(n,m) in enumerate(VENUE_META.items())]
+#VENUE_META = {
+#    "Gardens By The Bay flower dome": {"lat": 1.2840, "lng": 103.8648, "area": "Marina Bay"},
+#    "Serangoon Library": {"lat": 1.3506, "lng": 103.8721, "area": "Serangoon"},
+#    "Sentosa, Universal Studios": {"lat": 1.2540, "lng": 103.8238, "area": "Sentosa"},
+#    "Lolas Cafe": {"lat": 1.3120, "lng": 103.9000, "area": "Singapore"},
+#}
+#DEMO_VENUES = [{"id": i+1, "name": n, **m} for i,(n,m) in enumerate(VENUE_META.items())]
 
 def db():
     try:
@@ -39,9 +48,40 @@ def get_venues():
     conn = db()
     try:
         cur = conn.cursor(dictionary=True)
-        cur.execute("SELECT location_id AS id, location_name AS name FROM locations_registry WHERE is_active = 1 ORDER BY location_name")
+
+        cur.execute("""
+            SELECT
+                location_id AS id,
+                location_name AS name,
+                address,
+                latitude,
+                longitude,
+                category,
+                capacity,
+                occupancy_source
+            FROM locations_registry
+            WHERE is_active = 1
+            ORDER BY location_name
+        """)
+
         rows = cur.fetchall()
-        return [{"id": r["id"], "name": r["name"], **VENUE_META.get(r["name"], {"lat": 1.3521, "lng": 103.8198, "area": "Singapore"})} for r in rows]
+
+        venues = []
+
+        for r in rows:
+            venues.append({
+                "id": r["id"],
+                "name": r["name"],
+                "address": r["address"],
+                "lat": float(r["latitude"]) if r["latitude"] is not None else 1.3521,
+                "lng": float(r["longitude"]) if r["longitude"] is not None else 103.8198,
+                "category": r["category"],
+                "capacity": r["capacity"],
+                "occupancy_source": r["occupancy_source"]
+            })
+
+        return venues
+
     finally:
         conn.close()
 
@@ -57,6 +97,265 @@ def health():
 @app.get("/api/venues")
 def venues():
     return get_venues()
+
+# --------------------------------
+# GOOGLE PLACES SEARCH
+# --------------------------------
+
+@app.get("/api/places/search")
+def search_places(
+    q: str = Query(min_length=2, max_length=150),
+    max_results: int = Query(default=5, ge=1, le=10)
+):
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Google Places API key is not configured."
+        )
+
+    url = "https://places.googleapis.com/v1/places:searchText"
+
+    payload = {
+        "textQuery": q,
+        "maxResultCount": max_results,
+        "languageCode": "en",
+        "locationBias": {
+            "circle": {
+                "center": {
+                    "latitude": 1.3521,
+                    "longitude": 103.8198
+                },
+                "radius": 50000
+            }
+        }
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": (
+            "places.id,"
+            "places.displayName,"
+            "places.formattedAddress,"
+            "places.location,"
+            "places.types"
+        )
+    }
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Google Places API error: {error_body}"
+        )
+
+    except urllib.error.URLError:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to connect to Google Places API."
+        )
+
+    results = []
+
+    for place in data.get("places", []):
+        location = place.get("location", {})
+        display_name = place.get("displayName", {})
+
+        results.append({
+            "place_id": place.get("id"),
+            "name": display_name.get("text"),
+            "address": place.get("formattedAddress"),
+            "lat": location.get("latitude"),
+            "lng": location.get("longitude"),
+            "types": place.get("types", [])
+        })
+
+    return {
+        "results": results,
+        "count": len(results)
+    }
+
+# Register venues and create randomized occupancy
+
+@app.post("/api/venues/register")
+def register_venue(body: RegisterVenueIn):
+
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Google Places API key is not configured."
+        )
+
+    # 1. Retrieve selected venue details from Google Places
+    url = f"https://places.googleapis.com/v1/places/{body.place_id}"
+
+    headers = {
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": (
+            "id,"
+            "displayName,"
+            "formattedAddress,"
+            "location"
+        )
+    }
+
+    request = urllib.request.Request(url, headers=headers, method="GET")
+
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            place = json.loads(response.read().decode("utf-8"))
+
+    except urllib.error.HTTPError:
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to retrieve venue details from Google Places."
+        )
+
+    except urllib.error.URLError:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to connect to Google Places API."
+        )
+
+    name = place.get("displayName", {}).get("text")
+    address = place.get("formattedAddress")
+    location = place.get("location", {})
+
+    latitude = location.get("latitude")
+    longitude = location.get("longitude")
+
+    if not all([name, address, latitude is not None, longitude is not None]):
+        raise HTTPException(
+            status_code=502,
+            detail="Google Places returned incomplete venue information."
+        )
+
+    if len(name) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="Venue name exceeds the database's 100-character limit."
+        )
+
+    # 2. Check if venue already exists
+    conn = db()
+
+    try:
+        cur = conn.cursor(dictionary=True)
+
+        cur.execute("""
+            SELECT location_id, location_name
+            FROM locations_registry
+            WHERE google_place_id = %s
+            LIMIT 1
+        """, (body.place_id,))
+
+        existing = cur.fetchone()
+
+        if existing:
+            return {
+                "success": True,
+                "message": "Venue is already registered.",
+                "venue_id": existing["location_id"],
+                "venue_name": existing["location_name"]
+            }
+
+        # 3. Register venue
+        cur.execute("""
+            INSERT INTO locations_registry
+            (
+                location_name,
+                google_place_id,
+                address,
+                latitude,
+                longitude,
+                category,
+                capacity,
+                occupancy_source,
+                is_active
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'simulated', 1)
+        """, (
+            name,
+            body.place_id,
+            address,
+            latitude,
+            longitude,
+            body.category,
+            body.capacity
+        ))
+
+        venue_id = cur.lastrowid
+
+        # 4. Generate occupancy records
+        records = generate_occupancy(
+            body.capacity,
+            body.category
+        )
+
+        # 5. Insert generated records
+        values = [
+            (
+                name,
+                record["number_now"],
+                record["number_entering"],
+                record["number_leaving"],
+                record["time"]
+            )
+            for record in records
+        ]
+
+        cur.executemany("""
+            INSERT INTO location_information
+            (
+                location_name,
+                number_now,
+                number_entering,
+                number_leaving,
+                recorded_time
+            )
+            VALUES (%s, %s, %s, %s, %s)
+        """, values)
+
+        conn.commit()
+
+        return {
+            "success": True,
+            "message": "Venue registered and occupancy generated successfully.",
+            "venue_id": venue_id,
+            "venue_name": name,
+            "records_generated": len(records),
+            "occupancy_source": "simulated"
+        }
+
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="A venue with this name or Google Place ID already exists."
+        )
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        conn.close()
+
 
 def occupancy_for(name: str, arrival: datetime):
     # Existing table stores TIME only. Match the nearest 10-minute time-of-day sample.

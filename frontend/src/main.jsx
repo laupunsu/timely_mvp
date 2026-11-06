@@ -3,28 +3,238 @@ import {createRoot} from 'react-dom/client';
 import {Check, ChevronRight, Clock3, MapPin, Plus, Sparkles, ArrowLeft, ArrowRight, Navigation, CalendarDays, CircleCheck, ListTodo, Route, Users, RefreshCw, Trash2, Lock, Star, ExternalLink} from 'lucide-react';
 import './style.css';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
 const DEMO = [
  {id:9,name:'Gardens By The Bay flower dome',area:'Marina Bay',lat:1.284,lng:103.8648},
  {id:10,name:'Serangoon Library',area:'Serangoon',lat:1.3506,lng:103.8721},
  {id:11,name:'Sentosa, Universal Studios',area:'Sentosa',lat:1.254,lng:103.8238},
  {id:12,name:'Lolas Cafe',area:'Singapore',lat:1.312,lng:103.9}
 ];
-const sampleTasks=[
- {id:'a',title:'Pick up prescription',venue:'Serangoon Library',duration:15,priority:'High',deadline:'',completed:false},
- {id:'b',title:'Pizza lunch',venue:'Lolas Cafe',duration:45,priority:'Normal',deadline:'',completed:false},
- {id:'c',title:'Gym session',venue:'Gardens By The Bay flower dome',duration:60,priority:'Normal',deadline:'',completed:false}
-];
+// const sampleTasks=[
+//  {id:'a',title:'Pick up prescription',venue:'Serangoon Library',duration:15,priority:'High',deadline:'',completed:false},
+//  {id:'b',title:'Pizza lunch',venue:'Lolas Cafe',duration:45,priority:'Normal',deadline:'',completed:false},
+//  {id:'c',title:'Gym session',venue:'Gardens By The Bay flower dome',duration:60,priority:'Normal',deadline:'',completed:false}
+// ];
+const sampleTasks = [];
 function App(){
  const [venues,setVenues]=useState(DEMO),[dbStatus,setDbStatus]=useState('connecting');
  const [tasks,setTasks]=useState(sampleTasks),[step,setStep]=useState(0),[plan,setPlan]=useState(null);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[active,setActive]=useState(0);
- const [draft,setDraft]=useState({title:'',venue:DEMO[0].name,duration:30,priority:'Normal',deadline:''});
+ const [draft,setDraft]=useState({
+  title: '',
+  venue: '',
+  duration: 30,
+  priority: 'Normal',
+  deadline: ''
+});
  const [start,setStart]=useState('1.3521,103.8198');
+ const [placesQuery, setPlacesQuery] = useState('');
+ const [placeResults, setPlaceResults] = useState([]);
+ const [selectedPlace, setSelectedPlace] = useState(null);
+ const [searching, setSearching] = useState(false);
+ const [registering, setRegistering] = useState(false);
+ const [placeError, setPlaceError] = useState('');
+ const [venueCategory, setVenueCategory] = useState('attraction');
+ const [venueCapacity, setVenueCapacity] = useState(500);
+ const [editingTaskId, setEditingTaskId] = useState(null);
  useEffect(()=>{Promise.all([fetch(API+'/api/venues').then(r=>{if(!r.ok)throw Error();return r.json()}),fetch(API+'/api/health').then(r=>r.json()).catch(()=>({ok:false}))]).then(([v,h])=>{if(v.length)setVenues(v);setDbStatus(h.ok?'connected':'offline')}).catch(()=>setDbStatus('offline'));},[]);
  const done=tasks.filter(t=>t.completed).length;
  const pending=tasks.filter(t=>!t.completed);
- const addTask=()=>{if(!draft.title.trim())return;setTasks(p=>[...p,{...draft,id:crypto.randomUUID(),duration:Number(draft.duration),completed:false}]);setDraft(d=>({...d,title:''}));};
+ const searchPlaces = async () => {
+  if (!placesQuery.trim()) return;
+
+  setSearching(true);
+  setPlaceError('');
+  setPlaceResults([]);
+  setSelectedPlace(null);
+
+try {
+    const response = await fetch(
+      `${API}/api/places/search?q=${encodeURIComponent(placesQuery)}`
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || 'Search failed');
+    }
+
+    const results = Array.isArray(data)
+      ? data
+      : data.results || data.places || [];
+
+    setPlaceResults(results);
+
+    if (results.length === 0) {
+      setPlaceError('No venues found. Try another search.');
+    }
+  } catch (error) {
+    setPlaceError(error.message);
+  } finally {
+    setSearching(false);
+  }
+};
+const registerSelectedPlace = async () => {
+  if (!selectedPlace) return;
+
+  setRegistering(true);
+  setPlaceError('');
+
+  try {
+    const response = await fetch(`${API}/api/venues/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        place_id: selectedPlace.place_id,
+        category: venueCategory,
+        capacity: Number(venueCapacity)
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || 'Could not register venue');
+    }
+
+    // Refresh the venue list from MySQL
+    const venuesResponse = await fetch(`${API}/api/venues`);
+
+    if (!venuesResponse.ok) {
+      throw new Error('Venue registered, but could not refresh venue list.');
+    }
+
+    const updatedVenues = await venuesResponse.json();
+
+    setVenues(updatedVenues);
+
+    const newVenue = updatedVenues.find(
+      v => v.name === selectedPlace.name
+    );
+    
+    if (newVenue) {
+      setDraft(d => ({
+        ...d,
+        venue: newVenue.name
+      }));
+    
+      setPlacesQuery(newVenue.name);
+    } else {
+      throw new Error('Venue registered, but could not find it in the venue list.');
+    }
+    
+    setSelectedPlace(null);
+    setPlaceResults([]);
+
+  } catch (error) {
+    setPlaceError(error.message);
+  } finally {
+    setRegistering(false);
+  }
+};
+// Add Task Function 
+const addTask = () => {
+  if (!draft.title.trim() || !draft.venue.trim()) {
+    setPlaceError('Please enter a task name and location.');
+    return;
+  }
+  
+  const isRegistered = venues.some(
+    v => v.name.toLowerCase() === draft.venue.trim().toLowerCase()
+  );
+  
+  if (!isRegistered) {
+    setPlaceError('Please select a registered venue or search Google Maps to add it.');
+    return;
+  }
+  
+  setPlaceError('');
+
+  if (editingTaskId) {
+    // Update an existing task
+    setTasks(p =>
+      p.map(t =>
+        t.id === editingTaskId
+          ? {
+              ...t,
+              ...draft,
+              title: draft.title.trim(),
+              duration: Number(draft.duration)
+            }
+          : t
+      )
+    );
+
+    setEditingTaskId(null);
+  } else {
+    // Add a new task
+    setTasks(p => [
+      ...p,
+      {
+        ...draft,
+        id: crypto.randomUUID(),
+        title: draft.title.trim(),
+        duration: Number(draft.duration),
+        completed: false
+      }
+    ]);
+  }
+
+  setDraft({
+    title: '',
+    venue: '',
+    duration: 30,
+    priority: 'Normal',
+    deadline: ''
+  });
+
+  setPlacesQuery('');
+  setPlaceResults([]);
+  setSelectedPlace(null);
+};
+
+// Edit Tasks
+const editTask = (task) => {
+  setDraft({
+    title: task.title,
+    venue: task.venue,
+    duration: task.duration,
+    priority: task.priority,
+    deadline: task.deadline || ''
+  });
+
+  setEditingTaskId(task.id);
+  setPlacesQuery(task.venue);
+  setPlaceResults([]);
+  setSelectedPlace(null);
+
+  setStep(0);
+
+  window.scrollTo({
+    top: 0,
+    behavior: 'smooth'
+  });
+};
+
+const cancelEdit = () => {
+  setEditingTaskId(null);
+
+  setDraft({
+    title: '',
+    venue: '',
+    duration: 30,
+    priority: 'Normal',
+    deadline: ''
+  });
+
+  setPlacesQuery('');
+  setPlaceResults([]);
+  setSelectedPlace(null);
+};
+
+// Remove Tasks
  const removeTask=id=>setTasks(p=>p.filter(t=>t.id!==id));
  const generate=async()=>{
    if(!pending.length){setError('Add at least one task to build your day.');return}
@@ -53,15 +263,169 @@ function App(){
    {step===0&&<section className="workspace">
     <div className="section-heading"><div><div className="eyebrow">START WITH YOUR TO-DO LIST</div><h2>What's on your list?</h2><p>Tell us what you need to get done. We'll take care of the order.</p></div><span className="count-pill">{pending.length} tasks left</span></div>
     <div className="input-panel"><div className="panel-top"><ListTodo size={18}/><b>Add a task</b><span>Build your day, one stop at a time</span></div>
-     <div className="form-grid"><label className="wide">Task name<input value={draft.title} onChange={e=>setDraft({...draft,title:e.target.value})} onKeyDown={e=>e.key==='Enter'&&addTask()} placeholder="e.g. Pick up my prescription"/></label>
-      <label>Where?<select value={draft.venue} onChange={e=>setDraft({...draft,venue:e.target.value})}>{venues.map(v=><option key={v.id} value={v.name}>{v.name}</option>)}</select></label>
+    <div className="form-grid">
+
+{/* TASK NAME */}
+<label className="wide">
+  Task name
+  <input
+    value={draft.title}
+    onChange={e => setDraft({...draft, title: e.target.value})}
+    onKeyDown={e => e.key === 'Enter' && addTask()}
+    placeholder="e.g. Pick up my prescription"
+  />
+</label>
+
+{/* LOCATION */}
+<label className="wide">
+  Location
+
+  <div style={{ display: 'flex', gap: '8px' }}>
+    <input
+      list="registered-venues"
+      value={placesQuery}
+      onChange={e => {
+        setPlacesQuery(e.target.value);
+        setDraft(d => ({ ...d, venue: e.target.value }));
+      }}
+      placeholder="Search or select a venue..."
+    />
+
+    <datalist id="registered-venues">
+      {venues.map(v => (
+        <option key={v.id} value={v.name} />
+      ))}
+    </datalist>
+
+    <button
+      type="button"
+      className="add-btn"
+      onClick={searchPlaces}
+      disabled={searching || !placesQuery.trim()}
+    >
+      {searching ? 'Searching...' : 'Search Google Maps'}
+    </button>
+  </div>
+
+  <small>
+    Select an existing venue from the suggestions, or search Google Maps to add a new one.
+  </small>
+
+  {placeResults.length > 0 && (
+    <div style={{ marginTop: '12px' }}>
+      <b>Google Maps results</b>
+
+      {placeResults.map(place => (
+        <button
+          type="button"
+          key={place.place_id}
+          onClick={() => setSelectedPlace(place)}
+          style={{
+            display: 'block',
+            width: '100%',
+            padding: '12px',
+            marginTop: '8px',
+            textAlign: 'left',
+            border: '1px solid #ddd',
+            borderRadius: '8px',
+            background: selectedPlace?.place_id === place.place_id
+              ? '#eee8ff'
+              : 'white',
+            cursor: 'pointer'
+          }}
+        >
+          <strong>{place.name}</strong>
+          <br />
+          <small>{place.address}</small>
+        </button>
+      ))}
+    </div>
+  )}
+
+  {selectedPlace && (
+    <div style={{ marginTop: '12px' }}>
+      <b>Register this new venue</b>
+      <p>{selectedPlace.name}</p>
+
+      <label>
+        Venue category
+        <select
+          value={venueCategory}
+          onChange={e => setVenueCategory(e.target.value)}
+        >
+          <option value="library">Library</option>
+          <option value="shopping_mall">Shopping mall</option>
+          <option value="attraction">Attraction</option>
+          <option value="cafe">Cafe</option>
+          <option value="office">Office</option>
+          <option value="hospital">Hospital</option>
+          <option value="park">Park</option>
+          <option value="gym">Gym / Fitness Centre</option>
+        </select>
+      </label>
+
+      <label>
+        Estimated venue capacity
+        <input
+          type="number"
+          min="1"
+          value={venueCapacity}
+          onChange={e => setVenueCapacity(e.target.value)}
+        />
+      </label>
+
+      <button
+        type="button"
+        className="add-btn"
+        onClick={registerSelectedPlace}
+        disabled={registering || Number(venueCapacity) <= 0}
+      >
+        {registering ? 'Adding venue...' : 'Register and select venue'}
+      </button>
+    </div>
+  )}
+
+  {placeError && (
+    <p className="error">{placeError}</p>
+  )}
+</label>
+
       <label>Time needed<select value={draft.duration} onChange={e=>setDraft({...draft,duration:e.target.value})}>{[15,30,45,60,90,120].map(n=><option key={n} value={n}>{n} minutes</option>)}</select></label>
       <label>Priority<select value={draft.priority} onChange={e=>setDraft({...draft,priority:e.target.value})}><option>Normal</option><option>High</option><option>Low</option></select></label>
       <label>Must be done by<input type="time" value={draft.deadline} onChange={e=>setDraft({...draft,deadline:e.target.value})}/></label>
-     </div><button className="add-btn" onClick={addTask}><Plus size={17}/> Add to my list</button>
+     </div><div style={{ display: 'flex', gap: '8px' }}>
+  <button className="add-btn" onClick={addTask}>
+    {editingTaskId ? 'Save changes' : <><Plus size={17}/> Add to my list</>}
+  </button>
+
+  {editingTaskId && (
+    <button
+      type="button"
+      className="secondary-btn"
+      onClick={cancelEdit}
+    >
+      Cancel
+    </button>
+  )}
+</div>
     </div>
     <div className="list-head"><h3>Here's what I got</h3><span>{tasks.length} total</span></div>
-    <div className="task-list">{tasks.map((t,i)=><div className={'task-row '+(t.completed?'is-done':'')} key={t.id}><div className="task-icon">{t.completed?<Check size={17}/>:<MapPin size={17}/>}</div><div className="task-info"><b>{t.title}</b><span>{t.venue}</span></div><div className="task-meta"><span className={'priority '+t.priority.toLowerCase()}>{t.priority} priority</span><small><Clock3 size={13}/>{t.duration} min</small></div><button className="icon-btn" aria-label="Remove task" onClick={()=>removeTask(t.id)}><Trash2 size={16}/></button></div>)}</div>
+    <div className="task-list">{tasks.map((t,i)=><div className={'task-row '+(t.completed?'is-done':'')} key={t.id}><div className="task-icon">{t.completed?<Check size={17}/>:<MapPin size={17}/>}</div><div className="task-info"><b>{t.title}</b><span>{t.venue}</span></div><div className="task-meta"><span className={'priority '+t.priority.toLowerCase()}>{t.priority} priority</span><small><Clock3 size={13}/>{t.duration} min</small></div>
+    <button
+  className="text-btn"
+  onClick={() => editTask(t)}
+>
+  Edit
+</button>
+
+<button
+  className="icon-btn"
+  aria-label="Remove task"
+  onClick={() => removeTask(t.id)}
+>
+  <Trash2 size={16}/>
+</button>
+    </div>)}</div>
     <div className="bottom-action"><div><b>Ready to make the most of your day?</b><span>We'll find a smarter order based on travel and crowd levels.</span></div><button className="primary-btn" onClick={generate} disabled={busy||!pending.length}>{busy?'Finding your best timing…':<>Find my best timing <ArrowRight size={17}/></>}</button></div>
     {error&&<p className="error">{error}</p>}
    </section>}
