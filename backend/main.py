@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from occupancy_generator import generate_occupancy
 
 load_dotenv()
+print("Google Places API key loaded:", bool(os.getenv("GOOGLE_PLACES_API_KEY")))
 class RegisterVenueIn(BaseModel):
     place_id: str
     category: str
