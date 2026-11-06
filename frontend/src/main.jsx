@@ -3,7 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {Check, ChevronRight, Clock3, MapPin, Plus, Sparkles, ArrowLeft, ArrowRight, Navigation, CalendarDays, CircleCheck, ListTodo, Route, Users, RefreshCw, Trash2, Lock, Star, ExternalLink} from 'lucide-react';
 import './style.css';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
+const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const DEMO = [
  {id:9,name:'Gardens By The Bay flower dome',area:'Marina Bay',lat:1.284,lng:103.8648},
  {id:10,name:'Serangoon Library',area:'Serangoon',lat:1.3506,lng:103.8721},
@@ -258,7 +258,7 @@ const cancelEdit = () => {
  return <div className="app-shell">
   <header className="topbar"><div className="brand"><div className="brandmark"><Check size={19}/></div><span>Timely</span></div><nav><button className={step===0?'nav-active':''} onClick={()=>setStep(0)}>Your list</button><button className={step===1?'nav-active':''} onClick={()=>plan&&setStep(1)}>Your plan</button><button className={step===2?'nav-active':''} onClick={()=>plan&&setStep(2)}>On your way</button></nav><div className="status"><i className={dbStatus==='connected'?'online':''}/>{dbStatus==='connected'?'Database connected':'Preview mode'}</div></header>
   <main>
-   <section className="hero"><div><div className="eyebrow"><Sparkles size={14}/> YOUR DAY, WITHOUT THE DETOURS</div><h1>Your whole day,<br/><em>optimized.</em></h1><p>Less zigzagging. Less waiting. More time for what matters.</p></div><div className="hero-art"><div className="sun"/><div className="route-line"><span/><span/><span/></div><div className="hero-pin"><MapPin size={24}/></div><div className="hero-note"><b>Smart timing</b><small>Quiet moments, better plans.</small></div></div></section>
+   <section className="hero"><div><div className="eyebrow"><Sparkles size={14}/> LIST IT, TIME IT, DO IT</div><h1>Your whole day,<br/><em>optimized.</em></h1><p>Less zigzagging. Less waiting. More time for what matters.</p></div><div className="hero-art"><div className="sun"/><div className="route-line"><span/><span/><span/></div><div className="hero-pin"><MapPin size={24}/></div><div className="hero-note"><b>Smart timing</b><small>Quiet moments, better plans.</small></div></div></section>
    <div className="steps"><div className={step===0?'current':''}><span>01</span> List it</div><i/><div className={step===1?'current':''}><span>02</span> Time it</div><i/><div className={step===2?'current':''}><span>03</span> Do it</div></div>
    {step===0&&<section className="workspace">
     <div className="section-heading"><div><div className="eyebrow">START WITH YOUR TO-DO LIST</div><h2>What's on your list?</h2><p>Tell us what you need to get done. We'll take care of the order.</p></div><span className="count-pill">{pending.length} tasks left</span></div>

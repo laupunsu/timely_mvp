@@ -42,6 +42,11 @@ PROFILES = {
         "base": 0.10,
         "peak": 0.75,
         "peak_time": 18
+    },
+    "school": {
+        "base": 0.25,
+        "peak": 0.8,
+        "peak_time": 14
     }
 }
 
