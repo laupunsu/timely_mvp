@@ -4,8 +4,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, time
-from typin
-import Optional
+from typing import Optional
 import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
