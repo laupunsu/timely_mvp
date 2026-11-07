@@ -2,8 +2,10 @@ import os, math
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime, timedelta, time
-from typing import Optional
+from typin
+import Optional
 import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
@@ -98,6 +100,59 @@ def health():
 @app.get("/api/venues")
 def venues():
     return get_venues()
+
+# --------------------------------
+# REVERSE GEOCODING
+# --------------------------------
+
+@app.get("/api/location/reverse")
+def reverse_geocode(
+    lat: float = Query(ge=-90, le=90),
+    lng: float = Query(ge=-180, le=180)
+):
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Google API key is not configured."
+        )
+
+    url = "https://maps.googleapis.com/maps/api/geocode/json"
+
+    params = urllib.parse.urlencode({
+        "latlng": f"{lat},{lng}",
+        "key": api_key
+    })
+
+    request = urllib.request.Request(
+        f"{url}?{params}",
+        method="GET"
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+    except urllib.error.URLError:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to connect to Google Geocoding API."
+        )
+
+    status = data.get("status")
+
+    if status != "OK" or not data.get("results"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Geocoding failed: {status}"
+        )
+
+    return {
+        "address": data["results"][0]["formatted_address"],
+        "latitude": lat,
+        "longitude": lng
+    }
 
 # --------------------------------
 # GOOGLE PLACES SEARCH
@@ -400,6 +455,11 @@ class PlanIn(BaseModel):
     start_lng: float = 103.8198
     start_time: Optional[str] = None
 
+class DayFeedbackIn(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    feedback: Optional[str] = Field(default=None, max_length=1000)
+    completed_tasks: int = Field(default=0, ge=0, le=8)
+
 def haversine(a,b):
     R=6371
     p1,p2=math.radians(a["lat"]),math.radians(b["lat"])
@@ -463,3 +523,39 @@ def occupancy():
         # A current snapshot uses the current time-of-day slot.
         results.append({"venue":v["name"], **occupancy_for(v["name"],datetime.now())})
     return results
+
+@app.post("/api/feedback")
+def submit_feedback(body: DayFeedbackIn):
+    conn = db()
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO day_feedback
+            (rating, feedback, completed_tasks)
+            VALUES (%s, %s, %s)
+        """, (
+            body.rating,
+            body.feedback,
+            body.completed_tasks
+        ))
+
+        feedback_id = cur.lastrowid
+        conn.commit()
+
+        return {
+            "success": True,
+            "message": "Thank you for sharing your experience!",
+            "feedback_id": feedback_id
+        }
+
+    except Exception:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to save feedback."
+        )
+
+    finally:
+        conn.close()

@@ -18,7 +18,7 @@ PROFILES = {
         "peak": 0.80,
         "peak_time": 14
     },
-    "restaurant/cafe": {
+    "food": {
         "base": 0.10,
         "peak": 0.70,
         "peak_time": 12
