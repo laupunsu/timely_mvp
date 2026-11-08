@@ -85,7 +85,13 @@ useEffect(() => {
           `${API}/api/location/reverse?lat=${latitude}&lng=${longitude}`
         );
 
-        const data = await response.json();
+        //const data = await response.json();
+        const responseText = await response.text();
+
+        console.log("Geocoding status:", response.status);
+        console.log("Geocoding response:", responseText);
+
+        const data = JSON.parse(responseText);
 
         if (!response.ok) {
           throw new Error(data.detail || 'Reverse geocoding failed');
