@@ -333,7 +333,19 @@ const cancelEdit = () => {
     ? lng
     : DEFAULT_START.lng;
    try{
-    const r=await fetch(API+'/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:pending,start_lat:startLat,start_lng:startLng})});
+    //const r=await fetch(API+'/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:pending,start_lat:startLat,start_lng:startLng})});
+    const r = await fetch(API + '/api/plan', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        tasks: pending,
+        start_lat: startLat,
+        start_lng: startLng,
+        start_time: new Date().toISOString()
+      })
+    });
     if(!r.ok)throw Error('API unavailable');
     setPlan(await r.json());setDbStatus('connected');
    }catch(e){
